@@ -10,7 +10,7 @@ public struct RemoteClient: Equatable {
 
     public let name: String
     public let type: String?
-    public let commands: ClientSyncCommands?
+    public let commands: [SyncCommand]?
 
     let version: String?
     let protocols: [String]?
@@ -54,7 +54,7 @@ public struct RemoteClient: Equatable {
         self.commands = nil
     }
 
-    public init(client: RemoteClient, withCommands commands: ClientSyncCommands) {
+    public init(client: RemoteClient, withCommands commands: [SyncCommand]) {
         self.guid = client.guid
         self.name = client.name
         self.modified = client.modified
@@ -70,14 +70,25 @@ public struct RemoteClient: Equatable {
         self.commands = commands
     }
 
+    func withCommands(commands: [SyncCommand]) -> RemoteClient {
+        return RemoteClient(client: self, withCommands: commands)
+    }
+
     public func toJSON() -> JSON {
-        let jsonCommands = commands?.toJSON() ?? [JSON]()
-        let jsonFormFactor = formfactor ?? (DeviceInfo.isSimulator() ? "simulator" : "phone")
-        let jsonDevice = device ?? DeviceInfo.deviceModel()
-        let jsonAppPackage = appPackage ?? NSBundle.mainBundle().bundleIdentifier ?? "org.mozilla.ios.FennecUnknown"
-        let jsonApplication = application ?? DeviceInfo.appName()
-        let jsonVersion = version ?? "0.1"
-        let jsonProtocols = protocols ?? ["1.5"]
+        var jsonCommands: [JSON]
+        if let cmds = self.commands {
+            jsonCommands = cmds.map { command in
+                JSON(command.value)
+            }
+        } else {
+            jsonCommands = [JSON]()
+        }
+        let jsonFormFactor = formfactor ?? ""
+        let jsonDevice = device ?? ""
+        let jsonAppPackage = appPackage ?? ""
+        let jsonApplication = application ?? ""
+        let jsonVersion = version ?? ""
+        let jsonProtocols = protocols ?? [] 
 
         let json = JSON([
             "id": guid ?? "",

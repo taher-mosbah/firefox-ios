@@ -1,36 +1,13 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 import Shared
-
-public struct ClientSyncCommands:Equatable {
-    public let client: GUID
-    public var commands: [SyncCommand]
-
-    public var description: String {
-        return "<Client \(client), \(commands) commands.>"
-    }
-
-    public init(client: GUID, commands: [SyncCommand]) {
-        self.client = client
-        self.commands = commands
-    }
-
-    public func toJSON() -> [JSON] {
-        return commands.map { command in
-            return JSON(command.value)
-        }
-    }
-}
-
-public func ==(lhs: ClientSyncCommands, rhs: ClientSyncCommands) -> Bool {
-    return (lhs.client == rhs.client)
-}
 
 public struct SyncCommand: Equatable {
     public let value: String
     public var commandID: Int?
-    public let clientGUID: GUID?
+    public var clientGUID: GUID?
 
     let version: String?
 
@@ -73,33 +50,11 @@ public func ==(lhs: SyncCommand, rhs: SyncCommand) -> Bool {
     return lhs.value == rhs.value
 }
 
-public struct ClientSyncCommand:Equatable {
-    public let clientSyncID: Int?
-    public let clientGUID: GUID
-    public let commandID: Int?
-
-    public var description: String {
-        return "<Client \(clientGUID), \(commandID) command.>"
-    }
-
-    public init(clientSyncID: Int?, clientGUID: String, commandID:Int?) {
-        self.clientGUID = clientGUID
-        self.commandID = commandID
-        self.clientSyncID = clientSyncID
-    }
-}
-
-public func ==(lhs: ClientSyncCommand, rhs: ClientSyncCommand) -> Bool {
-    return (lhs.clientGUID == rhs.clientGUID) &&
-        (lhs.commandID == rhs.commandID)
-}
-
 public protocol SyncCommands {
     func deleteCommands() -> Success
-    func deleteCommands(clientCommands: ClientSyncCommands) -> Success
+    func deleteCommands(clientGUID: GUID) -> Success
 
-    func getCommands() -> Deferred<Result<[ClientSyncCommands]>>
-    func getCommandsForClient(clientGUID: GUID) -> Deferred<Result<ClientSyncCommands>>
+    func getCommands() -> Deferred<Result<[RemoteClient]>>
 
     func insertCommand(command: SyncCommand, forClients clients: [RemoteClient]) -> Deferred<Result<Int>>
     func insertCommands(commands: [SyncCommand], forClients clients: [RemoteClient]) -> Deferred<Result<Int>>

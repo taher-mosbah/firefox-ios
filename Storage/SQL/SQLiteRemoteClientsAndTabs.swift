@@ -12,7 +12,6 @@ public class SQLiteRemoteClientsAndTabs: RemoteClientsAndTabs {
     let db: BrowserDB
     let clients = RemoteClientsTable<RemoteClient>()
     let tabs = RemoteTabsTable<RemoteTab>()
-    let clientCommands = ClientCommandsTable<ClientSyncCommands>()
     let commands = SyncCommandsTable<SyncCommand>()
 
     public init(db: BrowserDB) {
@@ -20,7 +19,6 @@ public class SQLiteRemoteClientsAndTabs: RemoteClientsAndTabs {
         db.createOrUpdate(clients)
         db.createOrUpdate(tabs)
         db.createOrUpdate(commands)
-        db.createOrUpdate(clientCommands)
     }
 
     private func doWipe(f: (conn: SQLiteDBConnection, inout err: NSError?) -> ()) -> Deferred<Result<()>> {
@@ -236,13 +234,11 @@ public class SQLiteRemoteClientsAndTabs: RemoteClientsAndTabs {
             log.info(msg)
         }
     }
-//}
-//
-//extension SQLiteRemoteClientsAndTabs: SyncCommands {
+
     public func deleteCommands() -> Success {
         var err: NSError?
         db.transaction(&err) { connection, _ in
-            self.clientCommands.delete(connection, item: nil, err: &err)
+            self.commands.delete(connection, item: nil, err: &err)
             if let error = err {
                 return false
             }
@@ -252,10 +248,10 @@ public class SQLiteRemoteClientsAndTabs: RemoteClientsAndTabs {
         return failOrSucceed(err, "deleteCommands")
     }
 
-    public func deleteCommands(clientCommands: ClientSyncCommands) -> Success {
+    public func deleteCommands(clientGUID: GUID) -> Success {
         var err: NSError?
         db.transaction(&err) { connection, _ in
-            self.clientCommands.delete(connection, item: ClientSyncCommand(clientSyncID: nil, clientGUID: clientCommands.client, commandID: nil), err: &err)
+            self.commands.delete(connection, item: SyncCommand(id: nil, value: "", clientGUID: clientGUID), err: &err)
             if let error = err {
                 return false
             }
@@ -275,22 +271,14 @@ public class SQLiteRemoteClientsAndTabs: RemoteClientsAndTabs {
         db.transaction(&err) { connection, _ in
             // Update or insert client records.
             for command in commands {
-                var commandID = self.commands.insert(connection, item: command, err: &err)
-
-                if let err = err {
-                    log.debug("insertCommands:forClients failed: \(err)")
-                    return false
-                }
-                log.info("Inserted command: \(commandID)")
                 for client in clients {
-                    let clientSyncCommand = ClientSyncCommand(clientSyncID: nil, clientGUID: client.guid!, commandID: commandID)
-                    let inserted = self.clientCommands.insert(connection, item: clientSyncCommand, err: &err)
-                    log.info("Inserted client commands: \(inserted)")
+                    var commandID = self.commands.insert(connection, item: command.withClientGUID(client.guid), err: &err)
 
                     if let err = err {
-                        log.debug("insertCommand:forClients failed: \(err)")
+                        log.debug("insertCommands:forClients failed: \(err)")
                         return false
                     }
+                    log.info("Inserted command: \(commandID)")
                     ++numberOfInserts
                 }
             }
@@ -299,7 +287,7 @@ public class SQLiteRemoteClientsAndTabs: RemoteClientsAndTabs {
         return failOrSucceed(err, "insert command", numberOfInserts)
     }
 
-    public func getCommands() -> Deferred<Result<[ClientSyncCommands]>> {
+    public func getCommands() -> Deferred<Result<[RemoteClient]>> {
         var err: NSError?
 
         // Now find the clients.
@@ -315,30 +303,13 @@ public class SQLiteRemoteClientsAndTabs: RemoteClientsAndTabs {
         let allCommands = commandCursor.asArray()
         commandCursor.close()
 
-        var clientSyncCommands = clientSyncCommandsFromCommands(allCommands)
+        var clientSyncCommands = clientsFromCommands(allCommands)
 
         log.info("Found \(clientSyncCommands.count) client sync commands in the DB.")
         return failOrSucceed(err, "get commands", clientSyncCommands)
     }
 
-    public func getCommandsForClient(clientGUID: GUID) -> Deferred<Result<ClientSyncCommands>> {
-        var err: NSError?
-        let queryOptions = QueryOptions(filter: clientGUID, filterType: FilterType.Guid)
-        // Now find the clients.
-        let commandCursor = db.withReadableConnection(&err) { connection, _ in
-            return self.commands.query(connection, options: queryOptions)
-        }
-
-        let allCommands = commandCursor.asArray()
-        commandCursor.close()
-
-        let clientSyncCommands = allCommands.count > 0 ? clientSyncCommandsFromCommands(allCommands)[0] : ClientSyncCommands(client: clientGUID, commands: [])
-
-        log.info("Found \(clientSyncCommands.commands.count) client sync commands in the DB.")
-        return failOrSucceed(err, "get commands", clientSyncCommands )
-    }
-
-    func clientSyncCommandsFromCommands(commands: [SyncCommand]) -> [ClientSyncCommands] {
+    func clientsFromCommands(commands: [SyncCommand]) -> [RemoteClient] {
         var syncCommands = [GUID: [SyncCommand]]()
         for command in commands {
             var cmds: [SyncCommand] = syncCommands[command.clientGUID!] ?? [SyncCommand]()
@@ -346,11 +317,28 @@ public class SQLiteRemoteClientsAndTabs: RemoteClientsAndTabs {
             syncCommands[command.clientGUID!] = cmds
         }
 
-        var clientSyncCommands = syncCommands.keys.array.map({ (var key: String) -> ClientSyncCommands in
-            let clientGUID = GUID(key)
-            return ClientSyncCommands(client: clientGUID, commands: syncCommands[clientGUID] ?? [SyncCommand]())
-        })
+        let clientGUIDs = syncCommands.keys.array
 
-        return clientSyncCommands
+        var clientsWithCommands = [RemoteClient]()
+        for key in clientGUIDs {
+            var err: NSError?
+            let clientGUID = GUID(key)
+            let clientCursor = self.db.withReadableConnection(&err) { (connection, err) -> Cursor<RemoteClient> in
+                let queryOptions = QueryOptions(filter: clientGUID, filterType: FilterType.Guid)
+                return self.clients.query(connection, options: queryOptions)
+            }
+
+            if let err = err {
+                clientCursor.close()
+                continue
+            }
+
+            if let client = clientCursor[0] {
+                clientsWithCommands.append(client.withCommands(syncCommands[key] ?? []))
+            }
+            clientCursor.close()
+        }
+
+        return clientsWithCommands
     }
 }

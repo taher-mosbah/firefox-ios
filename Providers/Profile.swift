@@ -302,7 +302,7 @@ public class BrowserProfile: Profile {
 
     public func sendItems(items: [ShareItem], toClients clients: [RemoteClient]) {
         let commands = items.map { item in
-            return SyncCommand.fromShareItem(item, withAction: "displayURI")
+            SyncCommand.fromShareItem(item, withAction: "displayURI")
         }
         self.remoteClientsAndTabs.insertCommands(commands, forClients: clients)
     }

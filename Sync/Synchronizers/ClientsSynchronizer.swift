@@ -183,42 +183,17 @@ public class ClientsSynchronizer: BaseSingleCollectionSynchronizer, Synchronizer
     }
 
     private func uploadRecords(should: Bool, ifUnmodifiedSince: Timestamp?, toLocalClients localClients: RemoteClientsAndTabs, withServer storageClient: Sync15CollectionClient<ClientPayload>) -> Success {
-        return localClients.getClients() >>== { clients in
+        return localClients.getCommands() >>== { clients in
             for client in clients {
-                // don't try and upload our own client, only remote ones
-                // we'll do our own record later
-                if let clientGUID = client.guid {
-                    // get any unsent commands for this client
-                    var remoteClient = client
-                    localClients.getCommandsForClient(client.guid!)  >>== { clientCommands in
-                        if clientCommands.commands.count > 0 {
-                            remoteClient = RemoteClient(client: client, withCommands: clientCommands)
-                            return self.uploadClientRecord(remoteClient, withServer: storageClient).upon ({ response in
-                                if response.isSuccess {
-                                    // now delete the commands for this client
-                                    localClients.deleteCommands(remoteClient.commands!)
-                                }
-                            })
-                        }
-                    }
+                storageClient.put(self.getClientRecordForClient(client), ifUnmodifiedSince: nil)
+                    >>== { resp in
+                        log.debug("Client record upload succeeded.")
+                        localClients.deleteCommands(client.guid!)
                 }
             }
             return succeed()
         } >>== {
             self.maybeUploadOurRecord(should, ifUnmodifiedSince: ifUnmodifiedSince, toServer: storageClient)
-        }
-    }
-
-    private func uploadClientRecord(client:RemoteClient, withServer storageClient:Sync15CollectionClient<ClientPayload>) -> Success {
-        return storageClient.put(getClientRecordForClient(client), ifUnmodifiedSince: nil)
-            >>== { resp in
-                if let ts = resp.metadata.lastModifiedMilliseconds {
-                    // Protocol says this should always be present for success responses.
-                    log.debug("Client record upload succeeded.")
-                    return succeed()
-                }
-                log.debug("Unable to send commands for client")
-                return deferResult(FatalError(message: "Unable to send commands for client"))
         }
     }
 

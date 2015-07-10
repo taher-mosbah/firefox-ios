@@ -76,10 +76,9 @@ public class MockRemoteClientsAndTabs: RemoteClientsAndTabs {
     }
 
     public func deleteCommands() -> Success { return succeed() }
-    public func deleteCommands(clientCommands: ClientSyncCommands) -> Success  { return succeed() }
+    public func deleteCommands(clientGUID: GUID) -> Success { return succeed() }
 
-    public func getCommands() -> Deferred<Result<[ClientSyncCommands]>>  { return deferResult([]) }
-    public func getCommandsForClient(clientGUID: GUID) -> Deferred<Result<ClientSyncCommands>>  { return deferResult(ClientSyncCommands(client: Bytes.generateGUID(), commands: [])) }
+    public func getCommands() -> Deferred<Result<[RemoteClient]>>  { return deferResult([]) }
 
     public func insertCommand(command: SyncCommand, forClients clients: [RemoteClient]) -> Deferred<Result<Int>>  { return deferResult(0) }
     public func insertCommands(commands: [SyncCommand], forClients clients: [RemoteClient]) -> Deferred<Result<Int>>  { return deferResult(0) }

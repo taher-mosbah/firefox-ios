@@ -11,8 +11,8 @@ func byValue(a: SyncCommand, b: SyncCommand) -> Bool {
     return a.value < b.value
 }
 
-func byClient(a: ClientSyncCommands, b: ClientSyncCommands) -> Bool{
-    return a.client < b.client
+func byClient(a: RemoteClient, b: RemoteClient) -> Bool{
+    return a.guid! < b.guid!
 }
 
 class SyncCommandsTests: XCTestCase {
@@ -77,15 +77,6 @@ class SyncCommandsTests: XCTestCase {
             XCTAssertTrue($0.isSuccess)
             XCTAssertEqual(3, $0.successValue!)
 
-            var error: NSError? = nil
-            let clientCursor = self.db.withReadableConnection(&error) { (connection, err) -> Cursor<Int> in
-                let select = "SELECT COUNT(*) FROM \(TableClientCommands)"
-                return connection.executeQuery(select, factory: IntFactory, withArgs: nil)
-            }
-            XCTAssertNil(error)
-            XCTAssertNotNil(clientCursor[0])
-            XCTAssertEqual(3, clientCursor[0]!)
-
             var error2: NSError? = nil
             let commandCursor = self.db.withReadableConnection(&error2) { (connection, err) -> Cursor<Int> in
                 let select = "SELECT COUNT(*) FROM \(TableSyncCommands)"
@@ -93,7 +84,7 @@ class SyncCommandsTests: XCTestCase {
             }
             XCTAssertNil(error2)
             XCTAssertNotNil(commandCursor[0])
-            XCTAssertEqual(1, commandCursor[0]!)
+            XCTAssertEqual(3, commandCursor[0]!)
             e.fulfill()
         }
         self.waitForExpectationsWithTimeout(5, handler: nil)
@@ -116,7 +107,7 @@ class SyncCommandsTests: XCTestCase {
             }
             XCTAssertNil(error)
             XCTAssertNotNil(commandCursor[0])
-            XCTAssertEqual(1, commandCursor[0]!)
+            XCTAssertEqual(3, commandCursor[0]!)
             e.fulfill()
         }
         self.waitForExpectationsWithTimeout(5, handler: nil)
@@ -139,87 +130,9 @@ class SyncCommandsTests: XCTestCase {
             }
             XCTAssertNil(error)
             XCTAssertNotNil(commandCursor[0])
-            XCTAssertEqual(4, commandCursor[0]!)
+            XCTAssertEqual(12, commandCursor[0]!)
             e.fulfill()
         }
-        self.waitForExpectationsWithTimeout(5, handler: nil)
-    }
-
-    func testGetForValidClient() {
-        let action = "testcommand"
-        let syncCommands = shareItems.map { item in
-            return SyncCommand.fromShareItem(item, withAction: action)
-        }.sorted(byValue)
-        let e = self.expectationWithDescription("Insert.")
-        let a = self.expectationWithDescription("Get for client.")
-        let b = self.expectationWithDescription("Get for client 1.")
-        clientsAndTabs.insertCommands(syncCommands, forClients: clients).upon {
-            XCTAssertTrue($0.isSuccess)
-            XCTAssertEqual(12, $0.successValue!)
-
-            var error: NSError? = nil
-            let clientCursor = self.db.withReadableConnection(&error) { (connection, err) -> Cursor<Int> in
-                let select = "SELECT COUNT(*) FROM \(TableClientCommands)"
-                return connection.executeQuery(select, factory: IntFactory, withArgs: nil)
-            }
-            XCTAssertNil(error)
-            XCTAssertNotNil(clientCursor[0])
-            XCTAssertEqual(12, clientCursor[0]!)
-
-            var error2: NSError? = nil
-            let commandCursor = self.db.withReadableConnection(&error2) { (connection, err) -> Cursor<Int> in
-                let select = "SELECT COUNT(*) FROM \(TableSyncCommands)"
-                return connection.executeQuery(select, factory: IntFactory, withArgs: nil)
-            }
-            XCTAssertNil(error2)
-            XCTAssertNotNil(commandCursor[0])
-            XCTAssertEqual(4, commandCursor[0]!)
-            e.fulfill()
-
-            // add in an extra command for a client we are not testing for
-            self.clientsAndTabs.insertCommand(self.wipeCommand, forClients: [self.clients[1]])
-
-            var client = self.clients[0]
-            self.clientsAndTabs.getCommandsForClient(client.guid!).upon({ result in
-                if let clientCommands = result.successValue {
-                    XCTAssertEqual(syncCommands, clientCommands.commands.sorted(byValue))
-                } else {
-                    XCTFail("Expected commands!")
-                }
-                a.fulfill()
-            })
-
-            client = self.clients[1]
-            self.clientsAndTabs.getCommandsForClient(client.guid!).upon({ result in
-                if let clientCommands = result.successValue {
-                    XCTAssertEqual((syncCommands + [self.wipeCommand]).sorted(byValue), clientCommands.commands.sorted(byValue))
-                } else {
-                    XCTFail("Expected commands!")
-                }
-                b.fulfill()
-            })
-        }
-
-        self.waitForExpectationsWithTimeout(10, handler: nil)
-    }
-
-    func testGetForInvalidClient() {
-        let action = "testcommand"
-        let syncCommands = shareItems.map { item in
-            return SyncCommand.fromShareItem(item, withAction: action)
-            }.sorted(byValue)
-        clientsAndTabs.insertCommands(syncCommands, forClients: clients)
-
-        let b = self.expectationWithDescription("Get for invalid client.")
-        clientsAndTabs.getCommandsForClient(Bytes.generateGUID()).upon({ result in
-            XCTAssertTrue(result.isSuccess)
-            if let clientCommands = result.successValue {
-                XCTAssertEqual([], clientCommands.commands)
-            } else {
-                XCTFail("Expected commands!")
-            }
-            b.fulfill()
-        })
         self.waitForExpectationsWithTimeout(5, handler: nil)
     }
 
@@ -235,8 +148,8 @@ class SyncCommandsTests: XCTestCase {
             XCTAssertTrue(result.isSuccess)
             if let clientCommands = result.successValue {
                 XCTAssertEqual(clientCommands.count, self.clients.count)
-                for cmd in clientCommands {
-                    XCTAssertEqual(syncCommands, cmd.commands.sorted(byValue))
+                for client in clientCommands {
+                    XCTAssertEqual(syncCommands, client.commands!.sorted(byValue))
                 }
             } else {
                 XCTFail("Expected no commands!")
@@ -256,53 +169,33 @@ class SyncCommandsTests: XCTestCase {
         let a = self.expectationWithDescription("delete for client.")
         let b = self.expectationWithDescription("Get for deleted client.")
         let c = self.expectationWithDescription("Get for not deleted client.")
-        let commandsToDelete = ClientSyncCommands(client: client.guid!, commands: syncCommands)
         clientsAndTabs.insertCommands(syncCommands, forClients: clients).upon {
             XCTAssertTrue($0.isSuccess)
             XCTAssertEqual(12, $0.successValue!)
 
-            var error: NSError? = nil
-            let clientCursor = self.db.withReadableConnection(&error) { (connection, err) -> Cursor<Int> in
-                let select = "SELECT COUNT(*) FROM \(TableClientCommands)"
-                return connection.executeQuery(select, factory: IntFactory, withArgs: nil)
-            }
-            XCTAssertNil(error)
-            XCTAssertNotNil(clientCursor[0])
-            XCTAssertEqual(12, clientCursor[0]!)
-
-            self.clientsAndTabs.deleteCommands(commandsToDelete).upon({ result in
+            self.clientsAndTabs.deleteCommands(client.guid!).upon({ result in
                 XCTAssertTrue(result.isSuccess)
                 a.fulfill()
 
-                self.clientsAndTabs.getCommandsForClient(client.guid!).upon({ result in
-                    XCTAssertTrue(result.isSuccess)
-                    if let clientCommands = result.successValue {
-                        XCTAssertEqual(0, clientCommands.commands.count)
-                    } else {
-                        XCTFail("Expected no commands!")
-                    }
-                    b.fulfill()
-                })
-
                 var error: NSError? = nil
-                let clientCursor = self.db.withReadableConnection(&error) { (connection, err) -> Cursor<Int> in
-                    let select = "SELECT COUNT(*) FROM \(TableClientCommands)"
+                let commandCursor = self.db.withReadableConnection(&error) { (connection, err) -> Cursor<Int> in
+                    let select = "SELECT COUNT(*) FROM \(TableSyncCommands) WHERE client_guid = '\(client.guid!)'"
                     return connection.executeQuery(select, factory: IntFactory, withArgs: nil)
                 }
                 XCTAssertNil(error)
-                XCTAssertNotNil(clientCursor[0])
-                XCTAssertEqual(8, clientCursor[0]!)
+                XCTAssertNotNil(commandCursor[0])
+                XCTAssertEqual(0, commandCursor[0]!)
+                b.fulfill()
 
                 client = self.clients[1]
-                self.clientsAndTabs.getCommands().upon({ result in
-                    XCTAssertTrue(result.isSuccess)
-                    if let clientCommands = result.successValue {
-                        XCTAssertEqual(clientCommands.count, 2)
-                    } else {
-                        XCTFail("Expected commands!")
-                    }
-                    c.fulfill()
-                })
+                let commandCursor2 = self.db.withReadableConnection(&error) { (connection, err) -> Cursor<Int> in
+                    let select = "SELECT COUNT(*) FROM \(TableSyncCommands) WHERE client_guid = '\(client.guid!)'"
+                    return connection.executeQuery(select, factory: IntFactory, withArgs: nil)
+                }
+                XCTAssertNil(error)
+                XCTAssertNotNil(commandCursor2[0])
+                XCTAssertEqual(4, commandCursor2[0]!)
+                c.fulfill()
             })
         }
 
