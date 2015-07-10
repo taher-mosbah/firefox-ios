@@ -15,6 +15,7 @@ private let ClientsStorageVersion = 1
 public protocol Command {
     static func fromName(command: String, args: [JSON]) -> Command?
     func run(synchronizer: ClientsSynchronizer) -> Success
+    static func commandFromSyncCommand(syncCommand: SyncCommand) -> Command?
 }
 
 // Shit.
@@ -22,6 +23,7 @@ public protocol Command {
 // We need a way to log out the account.
 // So when we sync commands, we're gonna need a delegate of some kind.
 public class WipeCommand: Command {
+
     public init?(command: String, args: [JSON]) {
         return nil
     }
@@ -33,11 +35,19 @@ public class WipeCommand: Command {
     public func run(synchronizer: ClientsSynchronizer) -> Success {
         return succeed()
     }
+
+    public static func commandFromSyncCommand(syncCommand: SyncCommand) -> Command? {
+        let json = JSON.parse(syncCommand.value)
+        if let name = json["command"].asString,
+            args = json["args"].asArray {
+                return WipeCommand.fromName(name, args: args)
+        }
+        return nil
+    }
 }
 
 public class DisplayURICommand: Command {
     let uri: NSURL
-    // clientID: we don't care.
     let title: String
 
     public init?(command: String, args: [JSON]) {
@@ -60,6 +70,15 @@ public class DisplayURICommand: Command {
     public func run(synchronizer: ClientsSynchronizer) -> Success {
         synchronizer.delegate.displaySentTabForURL(uri, title: title)
         return succeed()
+    }
+
+    public static func commandFromSyncCommand(syncCommand: SyncCommand) -> Command? {
+        let json = JSON.parse(syncCommand.value)
+        if let name = json["command"].asString,
+            args = json["args"].asArray {
+                return DisplayURICommand.fromName(name, args: args)
+        }
+        return nil
     }
 }
 
@@ -89,6 +108,11 @@ public class ClientsSynchronizer: BaseSingleCollectionSynchronizer, Synchronizer
         get {
             return self.prefs.unsignedLongForKey("lastClientUpload") ?? 0
         }
+    }
+
+    func getClientRecordForClient(client: RemoteClient) -> Record<ClientPayload> {
+        let payload = ClientPayload(client.toJSON())
+        return Record(id: client.guid!, payload: payload, ttl: ThreeWeeksInSeconds)
     }
 
     public func getOurClientRecord() -> Record<ClientPayload> {
@@ -158,6 +182,46 @@ public class ClientsSynchronizer: BaseSingleCollectionSynchronizer, Synchronizer
         return deferResult((false, []))
     }
 
+    private func uploadRecords(should: Bool, ifUnmodifiedSince: Timestamp?, toLocalClients localClients: RemoteClientsAndTabs, withServer storageClient: Sync15CollectionClient<ClientPayload>) -> Success {
+        return localClients.getClients() >>== { clients in
+            for client in clients {
+                // don't try and upload our own client, only remote ones
+                // we'll do our own record later
+                if let clientGUID = client.guid {
+                    // get any unsent commands for this client
+                    var remoteClient = client
+                    localClients.getCommandsForClient(client.guid!)  >>== { clientCommands in
+                        if clientCommands.commands.count > 0 {
+                            remoteClient = RemoteClient(client: client, withCommands: clientCommands)
+                            return self.uploadClientRecord(remoteClient, withServer: storageClient).upon ({ response in
+                                if response.isSuccess {
+                                    // now delete the commands for this client
+                                    localClients.deleteCommands(remoteClient.commands!)
+                                }
+                            })
+                        }
+                    }
+                }
+            }
+            return succeed()
+        } >>== {
+            self.maybeUploadOurRecord(should, ifUnmodifiedSince: ifUnmodifiedSince, toServer: storageClient)
+        }
+    }
+
+    private func uploadClientRecord(client:RemoteClient, withServer storageClient:Sync15CollectionClient<ClientPayload>) -> Success {
+        return storageClient.put(getClientRecordForClient(client), ifUnmodifiedSince: nil)
+            >>== { resp in
+                if let ts = resp.metadata.lastModifiedMilliseconds {
+                    // Protocol says this should always be present for success responses.
+                    log.debug("Client record upload succeeded.")
+                    return succeed()
+                }
+                log.debug("Unable to send commands for client")
+                return deferResult(FatalError(message: "Unable to send commands for client"))
+        }
+    }
+
     /**
      * Upload our record if either (a) we know we should upload, or (b)
      * our own notes tell us we're due to reupload.
@@ -215,7 +279,7 @@ public class ClientsSynchronizer: BaseSingleCollectionSynchronizer, Synchronizer
         return localClients.insertOrUpdateClients(toInsert)
             >>== { self.processCommandsFromRecord(ours, withServer: storageClient) }
             >>== { (shouldUpload, commands) in
-                return self.maybeUploadOurRecord(shouldUpload, ifUnmodifiedSince: ours?.modified, toServer: storageClient)
+                return self.uploadRecords(shouldUpload, ifUnmodifiedSince: ours?.modified, toLocalClients: localClients, withServer: storageClient)
                     >>> {
                         log.debug("Running \(commands.count) commands.")
                         for (command) in commands {
@@ -252,7 +316,7 @@ public class ClientsSynchronizer: BaseSingleCollectionSynchronizer, Synchronizer
 
         if !self.remoteHasChanges(info) {
             log.debug("No remote changes for clients. (Last fetched \(self.lastFetched).)")
-            return maybeUploadOurRecord(false, ifUnmodifiedSince: nil, toServer: clientsClient)
+            return self.uploadRecords(false, ifUnmodifiedSince: nil, toLocalClients: localClients, withServer: clientsClient)
                 >>> { deferResult(.Completed) }
         }
 

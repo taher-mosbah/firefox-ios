@@ -10,6 +10,7 @@ public struct RemoteClient: Equatable {
 
     public let name: String
     public let type: String?
+    public let commands: ClientSyncCommands?
 
     let version: String?
     let protocols: [String]?
@@ -34,6 +35,7 @@ public struct RemoteClient: Equatable {
         self.application = json["application"].asString
         self.formfactor = json["formfactor"].asString
         self.device = json["device"].asString
+        self.commands = nil
     }
 
     public init(guid: GUID?, name: String, modified: Timestamp, type: String?, formfactor: String?, os: String?) {
@@ -49,6 +51,48 @@ public struct RemoteClient: Equatable {
         self.application = nil
         self.version = nil
         self.protocols = nil
+        self.commands = nil
+    }
+
+    public init(client: RemoteClient, withCommands commands: ClientSyncCommands) {
+        self.guid = client.guid
+        self.name = client.name
+        self.modified = client.modified
+        self.type = client.type
+        self.formfactor = client.formfactor
+        self.os = client.os
+
+        self.device = client.device
+        self.appPackage = client.appPackage
+        self.application = client.application
+        self.version = client.version
+        self.protocols = client.protocols
+        self.commands = commands
+    }
+
+    public func toJSON() -> JSON {
+        let jsonCommands = commands?.toJSON() ?? [JSON]()
+        let jsonFormFactor = formfactor ?? (DeviceInfo.isSimulator() ? "simulator" : "phone")
+        let jsonDevice = device ?? DeviceInfo.deviceModel()
+        let jsonAppPackage = appPackage ?? NSBundle.mainBundle().bundleIdentifier ?? "org.mozilla.ios.FennecUnknown"
+        let jsonApplication = application ?? DeviceInfo.appName()
+        let jsonVersion = version ?? "0.1"
+        let jsonProtocols = protocols ?? ["1.5"]
+
+        let json = JSON([
+            "id": guid ?? "",
+            "version": jsonVersion,    // TODO
+            "protocols": jsonProtocols,
+            "name": name,
+            "os": os ?? "iOS",
+            "commands": jsonCommands,
+            "type": type ?? "mobile",
+            "appPackage":  jsonAppPackage,
+            "application": jsonApplication,
+            "device": jsonDevice,
+            "formfactor": jsonFormFactor,
+            ])
+        return json
     }
 }
 

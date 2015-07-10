@@ -100,6 +100,10 @@ public class MockProfile: Profile {
         return SQLiteRemoteClientsAndTabs(db: self.db)
     }()
 
+    private lazy var syncCommands: SyncCommands = {
+        return SQLiteRemoteClientsAndTabs(db: self.db)
+    }()
+
     lazy var logins: protocol<BrowserLogins, SyncableLogins> = {
         return MockLogins(files: self.files)
     }()
@@ -136,5 +140,8 @@ public class MockProfile: Profile {
 
     func getCachedClientsAndTabs() -> Deferred<Result<[ClientAndTabs]>> {
         return deferResult([])
+    }
+
+    func sendItems(items: [ShareItem], toClients clients: [RemoteClient]) {
     }
 }
